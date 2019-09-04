@@ -1,56 +1,69 @@
 package ru.mek
 
 case class Wallet(dollars: Int, papers: Map[PaperName, Int])
+
 case class Order(name: String, sellPapers: Boolean, paperType: PaperName, price: Int, cnt: Int)
-case class ExchangeState(clients: Map[String, Wallet], holdingOrders: Map[Int, Order] = Map.empty) //TODO replace Map in clients with connector that have method get(name: String): Option[Wallet] and T + (String -> Wallet) => T
 
-class Exchange(val state: ExchangeState) {
+class Exchange(val clients: Map[String, Wallet], val holdingOrders: Map[Int, Order] = Map.empty) {
+    //TODO replace with work with storage
+    def getWallet(name: String): Option[Wallet] = clients.get(name)
 
-    /***
+    def updateClient(name: String, wallet: Wallet): Exchange =
+        new Exchange(clients + (name -> wallet), holdingOrders)
+
+    def deleteOrder(id: Int): Exchange =
+        new Exchange(clients, holdingOrders - id)
+
+    def updateOrder(id: Int, order: Order): Exchange =
+        new Exchange(clients, holdingOrders + (id -> order))
+
+    def addOrder(id: Int, order: Order): Exchange =
+        updateOrder(id, order)
+
+    /**
      * validates that user has enough source to process order after all his holding order would be proceeded
-     * @param order incoming order
-     * @param exchange state of exchange before processing this orders
+     *
+     * @param order    incoming order
      * @return option of order that is None if order is invalid
      */
     def orderValidator(
-        order: Order,
-        exchange: ExchangeState
-    ): Option[Order] = exchange.clients.get(order.name).flatMap {
+        order: Order
+    ): Option[Order] = this.getWallet(order.name).flatMap {
         case userState if (
-                              order.sellPapers &&
-                              userState.papers.get(order.paperType).exists(
-                                  order.cnt + exchange.holdingOrders.flatMap {
-                                      case (_, holdingOrder) if holdingOrder.sellPapers &&
-                                                                 holdingOrder.name == order.name &&
-                                                                 holdingOrder.paperType == order.paperType
-                                      => Some(holdingOrder.cnt)
-                                      case _ => None
-                                  }.sum <= _
-                              )
-                          ) || (
-                              !order.sellPapers && order.price * order.cnt + exchange.holdingOrders.flatMap {
-                                  case (_, holdingOrder) if !holdingOrder.sellPapers &&
-                                                            holdingOrder.name == order.name
-                                  => Some(holdingOrder.price * holdingOrder.cnt)
-                                  case _ => None
-                              }.sum <= userState.dollars
-                          )
-               => Some(order)
+            order.sellPapers &&
+            userState.papers.get(order.paperType).exists(
+                order.cnt + this.holdingOrders.flatMap {
+                    case (_, holdingOrder) if holdingOrder.sellPapers &&
+                                              holdingOrder.name == order.name &&
+                                              holdingOrder.paperType == order.paperType
+                    => Some(holdingOrder.cnt)
+                    case _ => None
+                }.sum <= _
+            )
+        ) || (
+            !order.sellPapers && order.price * order.cnt + this.holdingOrders.flatMap {
+                case (_, holdingOrder) if !holdingOrder.sellPapers &&
+                                          holdingOrder.name == order.name
+                => Some(holdingOrder.price * holdingOrder.cnt)
+                case _ => None
+            }.sum <= userState.dollars
+        ) => Some(order)
         case _ => None //TODO send to client message
     }
 
-    /***
-     * processes two orders and applies result to clients
-     * @param incomingOrder incoming order
-     * @param holdingOrder order from list of holding orders
-     * @param clients state of all clients on exchange before processing this orders
-     * @return changed orders and new clients state
+    /**
+     * merges two orders and applies result to exchange state
+     *
+     * @param incomingOrder  incoming order
+     * @param holdingOrderId id of order from list of holding orders
+     * @param holdingOrder   order from list of holding orders
+     * @return new exchange state and changed incoming order
      */
     def orderMerge(
         incomingOrder: Order,
-        holdingOrder : Order,
-        clients      : Map[String, Wallet]
-    ): (Option[Order], Option[Order], Map[String, Wallet]) = (
+        holdingOrderId: Int,
+        holdingOrder: Order
+    ): (Exchange, Option[Order]) = (
         if (incomingOrder.paperType == holdingOrder.paperType && incomingOrder.sellPapers != holdingOrder.sellPapers)
             (
                 if (incomingOrder.sellPapers && incomingOrder.price <= holdingOrder.price) //seller in incomingOrder
@@ -67,19 +80,21 @@ class Exchange(val state: ExchangeState) {
                     val priceDelta = sellerOrder.price * minCnt
 
                     for {
-                        sellerState <- clients.get(seller)
-                        buyerState <- clients.get(buyer)
+                        sellerState <- this.getWallet(seller)
+                        buyerState <- this.getWallet(buyer)
                         sellerPaperCnt <- sellerState.papers.get(sellerOrder.paperType)
                         buyerPaperCnt <- buyerState.papers.get(sellerOrder.paperType)
-                        newClients = clients + (
-                            sellerOrder.name -> Wallet(
+                        newState = this.updateClient(
+                            sellerOrder.name,
+                            Wallet(
                                 sellerState.dollars + priceDelta,
                                 sellerState.papers + (
                                     sellerOrder.paperType -> (sellerPaperCnt - minCnt)
                                 )
                             )
-                        ) + (
-                            buyerOrder.name -> Wallet(
+                        ).updateClient(
+                            buyerOrder.name,
+                            Wallet(
                                 buyerState.dollars - priceDelta,
                                 buyerState.papers + (
                                     sellerOrder.paperType -> (buyerPaperCnt + minCnt)
@@ -89,113 +104,87 @@ class Exchange(val state: ExchangeState) {
                     } yield
                         if (incomingOrder.cnt > holdingOrder.cnt) //deal closes holding order
                             (
-                                Some(
-                                    incomingOrder.copy(
-                                        cnt = incomingOrder.cnt - holdingOrder.cnt
-                                    )
-                                ),
-                                None,
-                                newClients
+                                newState.deleteOrder(holdingOrderId),
+                                Some(incomingOrder.copy(cnt = incomingOrder.cnt - holdingOrder.cnt))
                             )
                         else if (incomingOrder.cnt < holdingOrder.cnt) //deal closes valid order
                             (
-                                None,
-                                Some(
-                                    holdingOrder.copy(
-                                        cnt = holdingOrder.cnt - incomingOrder.cnt
-                                    )
+                                newState.updateOrder(
+                                    holdingOrderId,
+                                    holdingOrder.copy(cnt = holdingOrder.cnt - incomingOrder.cnt)
                                 ),
-                                newClients
+                                None
                             )
                         else //deal closes two orders
-                            (None, None, newClients)
+                            (newState.deleteOrder(holdingOrderId), None)
+            }
+        else
+            None
+    ).getOrElse((this, Some(incomingOrder))) //if no deal
 
+    /**
+     * processes one order changing exchange state
+     *
+     * @param localId id of order in this batch
+     * @param order order to process
+     * @param verbose optional, default false, if true prints to stdout how much orders from batch is done
+     * @param startId optional, default 0, id to merge with indices from previous batch
+     * @param ordersCount optional, default 0, for verbose count of all orders
+     * @return new state after processing this order
+     */
+    def processOrder(
+        localId: Int,
+        order: Order
+    )(verbose: Boolean = false, startId: Int = 0, ordersCount: Int = 0): Exchange = {
+        if (verbose) print(s"\r${localId + 1} of $ordersCount")
+
+        val orderId = localId + startId //TODO replace this id with something like ts + hash on input processing
+
+        val (changedExchange, changedIncomingOrderOpt) = this.orderValidator(order).map(
+            validOrder =>
+                (
+                    (this, Option(validOrder)) /:
+                    this.holdingOrders.filter(
+                        idAndOrder =>
+                            idAndOrder._2.sellPapers != order.sellPapers &&
+                            idAndOrder._2.paperType == order.paperType
+                    ).toSeq.sortBy(_._1)
+                ) {
+                    case (
+                        (exchange: Exchange, incomingOrderOpt: Option[Order]),
+                        (holdingOrderId: Int, holdingOrder: Order)
+                    ) =>
+                        incomingOrderOpt.map {
+                            incomingOrder =>
+                                exchange.orderMerge(incomingOrder, holdingOrderId, holdingOrder)
+                        }.getOrElse((exchange, incomingOrderOpt))
                 }
-            else
-                None
-            ).getOrElse((Some(incomingOrder), Some(holdingOrder), clients)) //if no deal
+        ).getOrElse((this, None))
 
-    /***
+        changedIncomingOrderOpt.map(
+            changedIncomingOrder =>
+                changedExchange.addOrder(orderId, changedIncomingOrder) //add incoming order if not empty
+        ).getOrElse(changedExchange)
+    }
+
+    /**
      * processes list of orders changing exchange state
+     *
      * @param orders list of orders to process
-     * @return new Exchange
+     * @param verbose optional, default false, if true prints to stdout how much is done
+     * @return new state after processing all orders
      */
     def processOrdersList(orders: Seq[Order], verbose: Boolean = false): Exchange = {
+        val oldKeys = holdingOrders.keySet //for batch processing
+
+        val startId = if (oldKeys.isEmpty) 0 else oldKeys.max + 1
+
         val ordersCount = if (verbose) orders.size else 0
 
-        val oldKeys = state.holdingOrders.keySet
-
-        val startId = if (oldKeys.isEmpty)
-            0
-        else
-            oldKeys.max + 1
-
-        val ordersWithIndices = orders.zipWithIndex.map {
-            case (order: Order, id: Int) =>
-                (id + startId, order) //TODO replace this id with something like ts + hash on input processing
+        val result = (this /: orders.zipWithIndex) {
+            case (exchange: Exchange, (order: Order, localId: Int)) =>
+                exchange.processOrder(localId, order)(verbose, startId, ordersCount)
         }
-
-        val result = new Exchange(
-            (state /: ordersWithIndices.zipWithIndex) {
-                case (initialExchangeState: ExchangeState, ((orderId: Int, order: Order), localId: Int)) => //input - order and what is holding
-                    if (verbose) print(s"\r${localId + 1} of $ordersCount")
-
-                    val (
-                        changedIncomingOrder,
-                        newClients,
-                        changedHoldingOrdersCollection
-                    ) = orderValidator(order, initialExchangeState).map(
-                        validOrder =>
-                            (
-                                (Option(validOrder), initialExchangeState.clients, Map.empty[Int, Option[Order]]) /:
-                                initialExchangeState.holdingOrders.filter(
-                                    idAndOrder =>
-                                        idAndOrder._2.sellPapers != order.sellPapers &&
-                                        idAndOrder._2.paperType == order.paperType
-                                ).toSeq.sortBy(_._1) //leave only interesting
-                            ) { //input - changed order after merges and holding that worked up
-                                case (
-                                    (
-                                        incomingOrderOpt: Option[Order],
-                                        clientState: Map[String, Wallet],
-                                        changedHoldingOrders: Map[Int, Option[Order]]
-                                    ),
-                                    holdingOrder: (Int, Order)
-                                ) =>
-                                    incomingOrderOpt.map {
-                                        incomingOrder =>
-
-                                            val (newIncomingOrder, newHoldingOrder, newClients) = orderMerge(
-                                                incomingOrder,
-                                                holdingOrder._2,
-                                                clientState
-                                            )
-
-                                            (
-                                                newIncomingOrder,
-                                                newClients,
-                                                if (!newHoldingOrder.contains(holdingOrder._2))
-                                                    changedHoldingOrders + (holdingOrder._1 -> newHoldingOrder)
-                                                else
-                                                    changedHoldingOrders
-                                            )
-                                    }.getOrElse((incomingOrderOpt, clientState, changedHoldingOrders))
-                            }
-                    ).getOrElse((None, initialExchangeState.clients, Map.empty[Int, Option[Order]]))
-
-                    ExchangeState(
-                        newClients,
-                        changedIncomingOrder.map(
-                            cio => initialExchangeState.holdingOrders + (orderId -> cio) //add incoming order if not empty
-                        ).getOrElse(initialExchangeState.holdingOrders) -- //update by id holdingOrders
-                        changedHoldingOrdersCollection.filter(_._2.isEmpty).keySet ++
-                        changedHoldingOrdersCollection.flatMap {
-                            case (key: Int, valueOpt: Option[Order]) =>
-                                valueOpt.map((key, _))
-                        }
-                    )
-            }
-        )
 
         if (verbose) println()
 
