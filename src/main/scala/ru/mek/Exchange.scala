@@ -178,7 +178,7 @@ object Exchange {
                     exchange.getHoldingOrdersByPaperTypeAndOperation(
                         order.paperType,
                         !order.sellPapers
-                    ).toSeq.sortBy(_._1)
+                    ).toSeq.sortBy(_._1) //here we can change logic from FIFO
                 ) {
                     case (
                         incomingOrderOpt: Option[Order],
