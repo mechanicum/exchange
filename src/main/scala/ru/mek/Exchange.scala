@@ -4,8 +4,8 @@ case class Wallet(dollars: Int, papers: Map[PaperName, Int])
 
 case class Order(name: String, sellPapers: Boolean, paperType: PaperName, price: Int, cnt: Int)
 
+//TODO replace this class with work with storage
 class Exchange(clientsInit: Map[String, Wallet], holdingOrdersInit: Map[Int, Order] = Map.empty) {
-    //TODO replace vars with work with storage
     private var clients: Map[String, Wallet] = clientsInit
 
     private var holdingOrders: Map[Int, Order] = holdingOrdersInit
