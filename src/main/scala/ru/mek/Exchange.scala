@@ -28,6 +28,32 @@ class Exchange(clientsInit: Map[String, Wallet], holdingOrdersInit: Map[Int, Ord
     private def addOrder(id: Int, order: Order): Unit =
         updateOrder(id, order)
 
+    private def getHoldingOrdersByNameAndOperation(
+        name: String,
+        sellPapers: Boolean
+    ): Map[Int, Order] = holdingOrders.filter(
+        idAndOrder =>
+            idAndOrder._2.sellPapers == sellPapers &&
+            idAndOrder._2.name == name
+    )
+
+    private def getHoldingOrdersByPaperTypeAndOperation(
+        paperType: PaperName,
+        sellPapers: Boolean
+    ): Map[Int, Order] = holdingOrders.filter(
+        idAndOrder =>
+            idAndOrder._2.paperType == paperType &&
+            idAndOrder._2.sellPapers == sellPapers
+    )
+
+    private def maxHoldingOrderKey: Int = {
+        val allKeys = holdingOrders.keySet
+
+        if (allKeys.isEmpty) 0 else allKeys.max + 1
+    }
+}
+
+object Exchange {
     /**
      * validates that user has enough source to process order after all his holding order would be proceeded
      *
@@ -36,23 +62,22 @@ class Exchange(clientsInit: Map[String, Wallet], holdingOrdersInit: Map[Int, Ord
      */
     private def orderValidator(
         order: Order
-    ): Option[Order] = this.getWallet(order.name).flatMap {
+    )(implicit exchange: Exchange): Option[Order] = exchange.getWallet(order.name).flatMap {
         case userState if (
             order.sellPapers &&
             userState.papers.get(order.paperType).exists(
-                order.cnt + this.holdingOrders.flatMap {
-                    case (_, holdingOrder) if holdingOrder.sellPapers &&
-                                              holdingOrder.name == order.name &&
-                                              holdingOrder.paperType == order.paperType
-                    => Some(holdingOrder.cnt)
+                order.cnt + exchange.getHoldingOrdersByNameAndOperation(order.name, sellPapers = true).flatMap {
+                    case (_, holdingOrder) if holdingOrder.paperType == order.paperType =>
+                        Some(holdingOrder.cnt)
                     case _ => None
                 }.sum <= _
             )
         ) || (
-            !order.sellPapers && order.price * order.cnt + this.holdingOrders.flatMap {
-                case (_, holdingOrder) if !holdingOrder.sellPapers &&
-                                          holdingOrder.name == order.name
-                => Some(holdingOrder.price * holdingOrder.cnt)
+            !order.sellPapers && order.price * order.cnt + exchange.getHoldingOrdersByNameAndOperation(
+                order.name, sellPapers = false
+            ).flatMap {
+                case (_, holdingOrder) =>
+                    Some(holdingOrder.price * holdingOrder.cnt)
                 case _ => None
             }.sum <= userState.dollars
         ) => Some(order)
@@ -71,7 +96,7 @@ class Exchange(clientsInit: Map[String, Wallet], holdingOrdersInit: Map[Int, Ord
         incomingOrder: Order,
         holdingOrderId: Int,
         holdingOrder: Order
-    ): Option[Order] = (
+    )(implicit exchange: Exchange): Option[Order] = (
         if (incomingOrder.paperType == holdingOrder.paperType && incomingOrder.sellPapers != holdingOrder.sellPapers)
             (
                 if (incomingOrder.sellPapers && incomingOrder.price <= holdingOrder.price) //seller in incomingOrder
@@ -88,12 +113,12 @@ class Exchange(clientsInit: Map[String, Wallet], holdingOrdersInit: Map[Int, Ord
                     val priceDelta = sellerOrder.price * minCnt
 
                     for {
-                        sellerState <- this.getWallet(seller)
-                        buyerState <- this.getWallet(buyer)
+                        sellerState <- exchange.getWallet(seller)
+                        buyerState <- exchange.getWallet(buyer)
                         sellerPaperCnt <- sellerState.papers.get(sellerOrder.paperType)
                         buyerPaperCnt <- buyerState.papers.get(sellerOrder.paperType)
                     } yield {
-                        this.updateClient(
+                        exchange.updateClient(
                             sellerOrder.name,
                             Wallet(
                                 sellerState.dollars + priceDelta,
@@ -103,7 +128,7 @@ class Exchange(clientsInit: Map[String, Wallet], holdingOrdersInit: Map[Int, Ord
                             )
                         )
 
-                        this.updateClient(
+                        exchange.updateClient(
                             buyerOrder.name,
                             Wallet(
                                 buyerState.dollars - priceDelta,
@@ -113,18 +138,18 @@ class Exchange(clientsInit: Map[String, Wallet], holdingOrdersInit: Map[Int, Ord
                             )
                         )
                         if (incomingOrder.cnt > holdingOrder.cnt) { //deal closes holding order
-                            this.deleteOrder(holdingOrderId)
+                            exchange.deleteOrder(holdingOrderId)
 
                             Some(incomingOrder.copy(cnt = incomingOrder.cnt - holdingOrder.cnt))
                         } else if (incomingOrder.cnt < holdingOrder.cnt) { //deal closes valid order
-                            this.updateOrder(
+                            exchange.updateOrder(
                                 holdingOrderId,
                                 holdingOrder.copy(cnt = holdingOrder.cnt - incomingOrder.cnt)
                             )
 
                             None
                         } else { //deal closes two orders
-                            this.deleteOrder(holdingOrderId)
+                            exchange.deleteOrder(holdingOrderId)
 
                             None
                         }
@@ -144,16 +169,15 @@ class Exchange(clientsInit: Map[String, Wallet], holdingOrdersInit: Map[Int, Ord
     def processOrder(
         orderId: Int,
         order: Order
-    ): Exchange = {
+    )(implicit exchange: Exchange): Exchange = {
 
         val changedIncomingOrderOpt = this.orderValidator(order).flatMap(
             validOrder =>
                 (
                     Option(validOrder) /:
-                    this.holdingOrders.filter(
-                        idAndOrder =>
-                            idAndOrder._2.sellPapers != order.sellPapers &&
-                            idAndOrder._2.paperType == order.paperType
+                    exchange.getHoldingOrdersByPaperTypeAndOperation(
+                        order.paperType,
+                        !order.sellPapers
                     ).toSeq.sortBy(_._1)
                 ) {
                     case (
@@ -169,10 +193,10 @@ class Exchange(clientsInit: Map[String, Wallet], holdingOrdersInit: Map[Int, Ord
 
         changedIncomingOrderOpt.foreach(
             changedIncomingOrder =>
-                this.addOrder(orderId, changedIncomingOrder) //add incoming order if not empty
+                exchange.addOrder(orderId, changedIncomingOrder) //add incoming order if not empty
         )
 
-        this
+        exchange
     }
 
     /**
@@ -181,19 +205,17 @@ class Exchange(clientsInit: Map[String, Wallet], holdingOrdersInit: Map[Int, Ord
      * @param orders list of orders to process
      * @return this Exchange
      */
-    def processOrdersList(orders: Seq[Order]): Exchange = {
-        val oldKeys = holdingOrders.keySet //for batch processing
-
-        val startId = if (oldKeys.isEmpty) 0 else oldKeys.max + 1
+    def processOrdersList(orders: Seq[Order])(implicit exchange: Exchange): Exchange = {
+        val startId = exchange.maxHoldingOrderKey //for batch processing
 
         orders.zipWithIndex.foreach {
             case (order: Order, localId: Int) =>
-                this.processOrder(
+                processOrder(
                     localId + startId, //TODO replace this id with something like ts + hash on input processing
                     order
                 )
         }
 
-        this
+        exchange
     }
 }

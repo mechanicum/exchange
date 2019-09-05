@@ -2,12 +2,14 @@ package ru.mek
 
 object WavesScenario {
     def main(args: Array[String]): Unit = {
-        val resultExchange = new Exchange(IO.readClients).processOrdersList(IO.readOrders)
+        implicit val exchange: Exchange = new Exchange(IO.readClients)
+
+        Exchange.processOrdersList(IO.readOrders)
 
         args.find(_.startsWith("out=")).map(
-            (outArg: String) => IO.writeClients(resultExchange.getClients, outArg.stripPrefix("out="))
+            (outArg: String) => IO.writeClients(exchange.getClients, outArg.stripPrefix("out="))
         ).getOrElse(
-            IO.writeClients(resultExchange.getClients)
+            IO.writeClients(exchange.getClients)
         )
     }
 }

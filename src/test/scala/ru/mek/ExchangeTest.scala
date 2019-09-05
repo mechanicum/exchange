@@ -15,9 +15,11 @@ class ExchangeTest extends WordSpec with Matchers {
             Order("C2", sellPapers = true, B, 10, 40)
         )
 
-        val res = new Exchange(clients).processOrdersList(orders)
+        implicit val exchange: Exchange = new Exchange(clients)
 
-        (res.getClients, res.getHoldingOrders).shouldBe(
+        Exchange.processOrdersList(orders)
+
+        (exchange.getClients, exchange.getHoldingOrders).shouldBe(
             (clients, Map.empty[Int, Order])
         )
     }
@@ -33,9 +35,11 @@ class ExchangeTest extends WordSpec with Matchers {
             Order("C2", sellPapers = true, A, 10, 8)
         )
 
-        val res = new Exchange(clients).processOrdersList(orders)
+        implicit val exchange: Exchange = new Exchange(clients)
 
-        (res.getClients, res.getHoldingOrders).shouldBe(
+        Exchange.processOrdersList(orders)
+
+        (exchange.getClients, exchange.getHoldingOrders).shouldBe(
             (
                 Map(
                     "C1" -> Wallet(920, Map(A -> 18, B -> 5, C -> 15, D -> 0)),
@@ -61,9 +65,11 @@ class ExchangeTest extends WordSpec with Matchers {
             Order("C3", sellPapers = true, A, 10, 15)
         )
 
-        val res = new Exchange(clients).processOrdersList(orders)
+        implicit val exchange: Exchange = new Exchange(clients)
 
-        (res.getClients, res.getHoldingOrders).shouldBe(
+        Exchange.processOrdersList(orders)
+
+        (exchange.getClients, exchange.getHoldingOrders).shouldBe(
             (
                 Map(
                     "C1" -> Wallet(900, Map(A -> 20, B -> 5, C -> 15, D -> 0)),
@@ -88,9 +94,11 @@ class ExchangeTest extends WordSpec with Matchers {
             Order("C2", sellPapers = true, A, 12, 8)
         )
 
-        val res = new Exchange(clients).processOrdersList(orders)
+        implicit val exchange: Exchange = new Exchange(clients)
 
-        (res.getClients, res.getHoldingOrders).shouldBe(
+        Exchange.processOrdersList(orders)
+
+        (exchange.getClients, exchange.getHoldingOrders).shouldBe(
             (
                 clients,
                 Map(
@@ -113,9 +121,11 @@ class ExchangeTest extends WordSpec with Matchers {
             Order("C2", sellPapers = true, A, 90, 15)
         )
 
-        val res = new Exchange(clients).processOrdersList(orders)
+        implicit val exchange: Exchange = new Exchange(clients)
 
-        (res.getClients, res.getHoldingOrders).shouldBe(
+        Exchange.processOrdersList(orders)
+
+        (exchange.getClients, exchange.getHoldingOrders).shouldBe(
             (
                 Map(
                     "C1" -> Wallet(100, Map(A -> 20, B -> 5, C -> 15, D -> 0)),
@@ -140,9 +150,11 @@ class ExchangeTest extends WordSpec with Matchers {
             Order("C2", sellPapers = false, A, 90, 10)
         )
 
-        val res = new Exchange(clients).processOrdersList(orders)
+        implicit val exchange: Exchange = new Exchange(clients)
 
-        (res.getClients, res.getHoldingOrders).shouldBe(
+        Exchange.processOrdersList(orders)
+
+        (exchange.getClients, exchange.getHoldingOrders).shouldBe(
             (
                 Map(
                     "C1" -> Wallet(1900, Map(A -> 20, B -> 5, C -> 15, D -> 0)),
@@ -160,9 +172,11 @@ class ExchangeTest extends WordSpec with Matchers {
         
         val orders = IO.readOrders
 
-        val res = new Exchange(clients).processOrdersList(orders)
+        implicit val exchange: Exchange = new Exchange(clients)
 
-        res.getClients.shouldBe(
+        Exchange.processOrdersList(orders)
+
+        exchange.getClients.shouldBe(
             Map(
                 "C1" -> Wallet(3582, Map(A -> 158, B -> 106, C -> 658, D -> 166)),
                 "C2" -> Wallet(2251, Map(A -> 453, B -> 328, C -> 926, D -> 619)),
